@@ -112,3 +112,28 @@ s < (1 + 1/μ(A)) / 2
 - Atom 數量與 Φ-D 相容性其實是同一問題的兩面:都是在問「經過實際量測後,系統還能不能分辨是哪幾個 atom 在起作用」。
 - 字典學習的價值,在於針對特定應用領域自動找出「最省、最能代表真實光譜」的基本形狀組合,讓計算光譜儀能用遠少於波長數的量測通道,穩定重建出完整光譜。
 - 實務設計時需同時考慮:字典表達能力(K)、字典內部相關性、感測矩陣 Φ 的設計,以及三者交互作用下的重建穩定性。
+
+## 6. 參考文獻
+
+**字典學習基礎演算法**
+
+- Aharon, M., Elad, M., & Bruckstein, A. (2006). K-SVD: An algorithm for designing overcomplete dictionaries for sparse representation. *IEEE Transactions on Signal Processing*, 54(11), 4311–4322. https://doi.org/10.1109/TSP.2006.881199
+- Engan, K., Aase, S. O., & Husøy, J. H. (1999). Method of optimal directions for frame design. In *Proc. IEEE ICASSP*, Vol. 5, pp. 2443–2446.
+
+**壓縮感知與稀疏恢復理論**
+
+- Donoho, D. L. (2006). Compressed sensing. *IEEE Transactions on Information Theory*, 52(4), 1289–1306.
+- Donoho, D. L., & Elad, M. (2003). Optimally sparse representation in general (nonorthogonal) dictionaries via ℓ1 minimization. *Proceedings of the National Academy of Sciences*, 100(5), 2197–2202.
+- Tropp, J. A. (2004). Greed is good: Algorithmic results for sparse approximation. *IEEE Transactions on Information Theory*, 50(10), 2231–2242.
+
+**感測矩陣與字典的聯合最佳化(Coherence 最佳化)**
+
+- Elad, M. (2007). Optimized projections for compressed sensing. *IEEE Transactions on Signal Processing*, 55(12), 5695–5702. https://doi.org/10.1109/TSP.2007.900760
+- Duarte-Carvajalino, J. M., & Sapiro, G. (2009). Learning to sense sparse signals: Simultaneous sensing matrix and sparsifying dictionary optimization. *IEEE Transactions on Image Processing*, 18(7), 1395–1408.
+
+**計算光譜儀應用與回顧文獻**
+
+- Kim, C., Park, D., & Lee, H.-N. (2020). Compressive sensing spectroscopy using a residual convolutional neural network. *Sensors*, 20(3), 594. https://doi.org/10.3390/s20030594
+- Zhang, G., Xu, T., Sun, B., et al. (2025). Parallel dictionary reconstruction and fusion for spectral recovery in computational imaging spectrometers. *Sensors*, 25(15), 4556. https://doi.org/10.3390/s25154556
+- Xue, Q., Yang, Y., Ma, W., Zhang, H., Zhang, D., Lan, X., Gao, L., Zhang, J., & Tang, J. (2024). Advances in miniaturized computational spectrometers. *Advanced Science*, 11, 2404448. https://doi.org/10.1002/advs.202404448
+- Guan, Q., Lim, Z. H., Sun, H., Chew, J. X. Y., & Zhou, G. (2023). Review of miniaturized computational spectrometers. *Sensors*, 23(21), 8768. https://doi.org/10.3390/s23218768

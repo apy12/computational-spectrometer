@@ -146,6 +146,59 @@ Fidelity 定義：`F(X, Y) = (Σ_m √(p_m q_m))²`
 
 8. **空間解析度數字待釐清。** 87.9 μm ≈ 5 單元 × (3 × 5.86 μm)（若 DCC3260M 像素為 5.86 μm），對應 k = 25 的 5 × 5 視窗在感測器平面的尺寸；但論文說腦成像用 k = 100。可能定義的是微光譜儀中心間距而非視窗大小，需向原文或作者確認。
 
+### 2.4 「解析度」宣稱的拆解：四個數字、來源與計算邏輯
+
+論文裡有四個數字常被讀成「解析度」，實際量的是不同的東西。以下每個數字都標出在論文哪裡出現（段落與圖號依 arXiv:2005.02689 正文；Optica 正式版頁碼依線上片段推定，需核對）。
+
+#### 2.4.1 四個數字與出處
+
+| 數字 | 實驗條件 | 實際量的是 | 出處 |
+|---|---|---|---|
+| **0.5 nm**（Δλ/λ ≈ 0.001，「601 通道」） | 校準時單色儀掃描步距 | **取樣格點密度**：重建向量 f 的維度 M = 601，不是量測到的獨立資訊量 | § 3 第 1 段：「450–750 nm (at 0.5 nm intervals) with unit number k = 25」；Fig. 3 caption「450–750 nm, 0.5 nm intervals」；Fig. 5 caption「a data cube with 601 bands」；§ 4 Conclusion「Δλ/λ ~ 0.001 (λ: 450–750 nm, Δλ: 0.5 nm interval)」；補充 S1「wavelength range is 450–750 nm and sampling interval is 0.5 nm」 |
+| **0.04 nm** | 450–750 nm 逐點打單色光，k = 25，對重建峰做高斯擬合 | **中心波長準確度**（定位偏差）。質心可定到格點的幾十分之一，與能否分開兩條線無關 | Abstract「center-wavelength accuracy of 0.04 nm」；§ 3 第 1 段「Fig. 3b shows that the center-wavelength accuracy … was approximately 0.04 nm」；Fig. 3b caption「assumed the Gaussian envelope … to estimate the linewidth and center-wavelength」；§ 4 Conclusion 重述。Optica 版 p. 462（Introduction）、p. 464（Results） |
+| **0.23 / 0.24 nm** | 雙峰實驗中重建出的兩條線的線寬 | **演算法輸出線寬**。汞 546 nm 線本身 <0.01 nm，所以全是系統加寬；但 l1 稀疏重建會人為壓窄峰，數字偏樂觀 | § 3 第 2 段：「the linewidths of the reconstructed double peaks (blue curves) were broadened to 0.23 and 0.24 nm」；Fig. 3c |
+| **0.8 nm** | 汞 546 nm 線 + 可調光源 545.2 nm；**波段限制在 544.6–546.6 nm（2 nm）、取樣改為 0.2 nm** | **已知 2 nm 窗內的雙線可分辨性**。論文的 headline「spectral resolution」 | Abstract「spectral resolution of 0.8 nm」；§ 3 第 2 段：「we reduced the sampling interval to 0.2 nm and the spectral band to 2 nm (544.6–546.6 nm) … resolved the aforementioned double peaks with a wavelength interval of only 0.8 nm, as shown in Fig. 3c」；Fig. 3c caption「546 nm and 545.2 nm … interval of 0.8 nm … Other spectral lines of the mercury lamp are removed using filters」；§ 4 Conclusion「spectral resolution of 0.8 nm, and a broad wavelength range of 300 nm」。Optica 版 p. 462、p. 464 |
+
+相關的比較宣稱（同出 § 3 第 2 段與 § 4 Conclusion）：
+- 「approximately an order of magnitude higher than … nanowire spectrometer (15 nm) [33]」→ 比較對象是 Yang et al., *Science* 365, 1017 (2019)
+- 「surpass … commercial portable spectrometers (OceanView QE Pro) by approximately 1.2 nm」→ QE Pro 解析度取決於狹縫與光柵配置，論文未給其設定
+- 寬譜 fidelity > 98%（k = 25）：§ 3 第 3 段、Eq. (3)、Fig. 4a–c caption；k = 25 時「larger than 96%」見 Fig. 4d caption
+
+與 Xue 綜述的對應：
+- 綜述 Table 1 的「Metasurfaces [29]：450–750 nm，0.5 nm」是 Yang et al., *LPR* 2022（自由形狀 meta-atom），**不是** Xiong 2022；兩篇的 0.5 nm 意義也不同（Yang 是解析度宣稱，Xiong 是取樣步距）
+- 綜述 § 4.2 引用 Xiong 2022 為 [90]，作為 fidelity 指標的使用範例；同節明言單峰稀疏光譜對壓縮感知太容易，應看寬譜指標
+
+#### 2.4.2 為什麼「已知 2 nm 窗」改變了問題的性質
+
+計算光譜儀解 I = H f，k 個量測、M 個未知數。
+
+**全波段**：M = 601，k = 25，壓縮比 24 倍。不加先驗做偽逆，每個自由度平攤 300 nm / 25 = 12 nm。比 12 nm 好的結果都是先驗給的：單色光是 delta 基底下的 1-稀疏訊號，壓縮感知只需 k ≳ C·s·log(M/s) 個量測即可精確恢復，k = 25 對一兩條譜線綽綽有餘。所以「單峰重建很漂亮」在這類論文裡幾乎必然。
+
+**雙峰實驗**：窗縮到 2 nm、步距 0.2 nm → M = 11，k = 25。方程式數比未知數多，已不是欠定的壓縮感知，而是超定最小二乘加 l1 正則。難點只剩條件數：寬頻濾光片的穿透曲線在 2 nm 內幾乎不變，H 限制在這 11 欄高度相關，能否分開 0.8 nm 取決於 SNR 與 l1 先驗強度，不是編碼結構的頻率鑑別力。
+
+這個實驗證明的是「已知譜線大致位置時，定位能力足以分開相距 0.8 nm 的兩條窄線」，不是「晶片在 450–750 nm 上有 0.8 nm 解析度」。
+
+另外兩點：
+- 重建線寬 0.23 nm、峰間距 0.8 nm ≈ 3.5 倍線寬，兩峰遠未靠近 Rayleigh 判據。0.8 nm 是**示範值**，不是把可調光源掃到剛好分不開時的**極限值**；極限可能更低，也可能在其他波長或強度比下崩掉，論文未測。
+- 「601 個波段」是表示方式，不是可分辨元素數。同樣 25 個量測改用 0.1 nm 格點就變成「3001 個波段」，資訊量不變。
+
+#### 2.4.3 寬譜情況才是真正的考驗
+
+寬譜在 delta 基底下不稀疏，改用字典 f = Ψs。此時「解析度」的意義變成**字典原子裡最細的特徵有多細**：字典平滑則重建永遠平滑；字典含血紅素譜則重建出吸收谷不奇怪。論文對寬譜只報 fidelity > 98%，此指標對 1–2 nm 細節極不敏感（300 nm 寬平滑曲線抹掉一個 1 nm 凹陷，fidelity 幾乎不動）。
+
+論文沒做、但最有說服力的測試是**稀疏疊在連續背景上**：寬頻光源 + 汞線，或寬頻光通過 1 nm notch filter。這種輸入既不稀疏又含窄特徵，正是實際樣品（組織反射譜、氣體吸收線）的樣子。
+
+#### 2.4.4 這類論文的解析度應該怎麼報
+
+1. 取樣步距（M 的定義，不是性能）
+2. 全波段、不限窗的單色光重建 FWHM 對波長曲線，註明 k
+3. 雙線可分辨極限：掃描間距至失敗，在多個中心波長、多種強度比下做
+4. 窄特徵疊在寬背景上的重建誤差
+5. 上述指標對 SNR 的依賴曲線（計算光譜儀解析度隨雜訊惡化，這是與光柵儀最本質的差別）
+6. 最後才用 P_encoding = 範圍 / (k × 解析度) 跨論文比較，代入的必須是第 3 或第 4 項
+
+以此框架看 Xiong 2022：有第 1 項（0.5 nm）、定位準確度（0.04 nm）、窗內雙線（0.8 nm）、寬譜 fidelity（> 98%）；第 2（不限窗 FWHM 曲線）、3、4、5 項缺。引用時較誠實的寫法：「k = 25、已知 2 nm 窗條件下分辨 0.8 nm 雙線；寬譜重建 fidelity > 98%」，而非「0.8 nm 解析度、601 通道」。這是整個領域的報數慣例，非此篇獨有；綜述 § 4.2 提出 fidelity、RMSE、最低 SNR 等指標即為回應。
+
 ---
 
 ## 3. 這條路線的後續分支
@@ -195,6 +248,8 @@ Fidelity 定義：`F(X, Y) = (Σ_m √(p_m q_m))²`
 - [ ] 確認 Optica 正式版補充資料 S2（CS 優化 / mutual coherence 篩選細節）、S5（影像自適應演算法）、S6–S7（動物實驗與血紅素光譜）
 - [ ] 核對 DCC3260M 像素尺寸與 87.9 μm 空間解析度的定義
 - [ ] 檢查補充 S1 穿透曲線峰值，估算實際光通量
+- [ ] 核對 2.4.1 表中 Optica 正式版頁碼（目前依線上片段推定：p. 462 Introduction、p. 464 Results、p. 466 Fig. 5）
+- [ ] 從 Optica 版 Fig. 3a/3b 讀出全波段（不限窗）單色光重建的 FWHM 對波長數據，補上 2.4.4 第 2 項
 
 ---
 

@@ -392,7 +392,165 @@ n 小於 B 時直接對白化資料做 SVD，不要先組 $\Sigma_Y$ 。
 
 ---
 
-## 6. 流程總結
+## 6. 應用：感測器響應曲線（sensor response profiles）的選擇
+
+問題：設計多通道光譜感測器時，要根據應用情境（環境光、Raman）從候選的響應曲線池裡選出一組通道。
+
+**核心觀念：分解的對象是目標訊號空間，不是感測器響應本身。**
+感測器響應的分解只能看出通道有多冗餘，回答不了「這組通道適不適合這個應用」。
+
+### 6.1 框架
+
+$$
+y = A s + n
+$$
+
+- $A$ ： m × B 感測矩陣，每一列是一個通道的響應曲線
+- $s$ ： 待測光譜（B × 1）
+- $y$ ： m 個通道的讀值
+- 目標：從 $y$ 推回 $s$ 或推回真正要的量（CCT、濃度、峰強度）的誤差最小
+
+### 6.2 目標光譜的基底
+
+先建目標光譜庫（環境光：各種 CCT 的日光、LED、螢光燈、白熾燈；Raman：分析物光譜加螢光背景），做 PCA：
+
+$$
+s \approx P c , \qquad P \in \mathbb{R}^{B \times k}
+$$
+
+- k 是這類光譜的自由度，也是通道數的下限
+- 日光只需要 3 個基底（CIE 的 S0、S1、S2 就是日光 PCA 的結果，見第 7 節）
+- 加入 LED 與螢光燈後約需 6–10 個
+- Raman 取決於分析物數量加背景的平滑成分
+
+### 6.3 評估感測器組合：把 A 投影到基底上
+
+$$
+M = A P \quad (m \times k)
+$$
+
+$M$ 的奇異值代表每個基底方向被這組感測器「看到」的強度。某個奇異值接近零，表示該方向的光譜變化在輸出裡幾乎沒反應，後處理救不回來。
+
+考慮通道雜訊後：
+
+$$
+M_w = \Sigma_n^{-1/2} A P
+$$
+
+$M_w$ 的奇異值直接是各基底方向的 SNR。這與 MNF 是同一個邏輯（雜訊白化後看訊號子空間），只是白化的是感測器通道的雜訊，而且在設計階段就能算出來。
+
+### 6.4 設計指標
+
+貝氏框架下，基底係數的先驗 $\Sigma_c$ 取 PCA 特徵值的對角矩陣，後驗共變異矩陣：
+
+$$
+\Sigma_{\mathrm{post}} = \left( \Sigma_c^{-1} + M^T \Sigma_n^{-1} M \right)^{-1}
+$$
+
+| 指標 | 定義 | 意義 |
+|---|---|---|
+| A-optimal | 最小化 $\mathrm{tr}(\Sigma_{\mathrm{post}})$ | 期望重建誤差 |
+| D-optimal | 最大化 $\log\det(\Sigma_c^{-1} + M^T \Sigma_n^{-1} M)$ | 讀值與光譜的互資訊 |
+| 任務導向 | 解 $M^T w \approx P^T f$ | 線性泛函 $f^T s$ 能否被量到 |
+
+任務導向指標：若只需要一個線性泛函（三刺激值、Raman 峰積分、濃度迴歸向量），要求 $f^T P$ 落在 $M$ 的列空間裡。最小平方殘差是「原理上量不到的部分」， $w^T \Sigma_n w$ 是雜訊放大量。這是 Luther 條件的推廣。
+
+```python
+def design_score(A_sub, P, Sigma_c, Sigma_n):
+    # A_sub: m x B 候選通道響應；P: B x k 目標光譜基底
+    M = A_sub @ P
+    info = np.linalg.inv(Sigma_c) + M.T @ np.linalg.solve(Sigma_n, M)
+    post = np.linalg.inv(info)
+    return np.trace(post), np.linalg.slogdet(info)[1]   # A-opt 越小越好，D-opt 越大越好
+```
+
+選擇流程：從候選池做 greedy forward selection，每次加入讓 $\mathrm{tr}(\Sigma_{\mathrm{post}})$ 下降最多的通道，直到邊際改善小於門檻。log det 是次模函數，greedy 有接近最佳的理論保證。
+
+### 6.5 感測器響應本身的分解能看什麼
+
+對候選池的 $A$ 做 SVD，奇異值衰減曲線顯示這些響應曲線實際張成幾維。兩條幾乎共線的濾光片會貢獻一個很小的奇異值，代表冗餘。但冗餘不一定沒用（重複通道可平均雜訊），最終仍以 6.4 的雜訊感知指標決定。
+
+### 6.6 兩種應用的差異
+
+**環境光**
+- 目標光譜平滑、低維，寬帶重疊濾光片就有效（類似人眼三錐體）
+- Luther 條件：要估 XYZ，CIE 色匹配函數須近似落在感測器響應的線性張成裡
+- 需要紅外與紫外截止，日光和白熾燈在可見光外能量很大，會污染寬帶通道
+
+**Raman**
+- 訊號是稀疏窄峰疊在平滑螢光背景上，光子極少
+- PCA 基底不適合（峰位固定但強度獨立變化），改用 NMF 或「已知峰位 + 低階多項式背景」字典
+- 核心矛盾：窄帶濾光片特異性好但丟光子；寬帶重疊（Hadamard 型）保留通量但需後端解混
+- SNR 是綁死的約束，通道數增加代表每通道光子減少，指標要在固定總曝光下比較
+- MOE（multivariate optical element）：把 PLS 迴歸向量做成濾光片穿透率，一個通道直接讀出濃度
+
+### 6.7 容易踩的坑
+
+- PCA 基底按變異量排序，不是按任務重要性；有目標變數時用 PLS 或 LDA 方向，或至少用任務導向指標驗證
+- 光譜庫不夠多樣，k 會低估；留一部分光譜庫做驗證
+- 實體濾光片響應非負，做不出有負瓣的曲線，只能靠通道相減實現，會放大雜訊
+- 製程公差：對 $A$ 加擾動做蒙地卡羅，確認指標對公差不敏感
+
+---
+
+## 7. 驗證：日光只需要 3 個基底
+
+腳本：`daylight_basis_check.py`（需 `pip install colour-science`）
+
+### 7.1 為什麼不能拿 CIE D 系列做 PCA
+
+CIE 日光模型本身就是三個基底疊出來的：
+
+$$
+S_D(\lambda) = S_0(\lambda) + M_1 S_1(\lambda) + M_2 S_2(\lambda)
+$$
+
+對它做 PCA 必然得到 3，是循環論證。
+
+### 7.2 方法
+
+用與 CIE 無關的簡化物理大氣模型（類 SPCTRAL2）產生 3000 條日光光譜：
+
+- 太陽：5778 K Planck
+- 直射透過率：Rayleigh 散射、Ångström 氣溶膠（濁度 β、指數 α、單次散射反照率）、臭氧 Chappuis 帶、水氣 720 nm、氧氣 760 nm
+- 天空光：Rayleigh 散射項（偏藍）加氣溶膠前向散射項（偏白）
+- 雲：近乎光譜中性的漫射項，以雲量混合
+- 直射可見比例 0–1（陽光 vs 陰影）
+- 8 個物理參數獨立隨機取樣，光譜在 560 nm 正規化為 1
+
+然後做 PCA，看累積變異、光譜 RMSE、色度誤差 Δu'v' 隨基底數的變化，並與 CIE S1/S2 比較子空間夾角。
+
+### 7.3 結果
+
+| k | 累積變異 | 光譜 RMSE | Δu'v' 中位 | Δu'v' 95% |
+|---|---|---|---|---|
+| 1 | 84.9% | 0.034 | 0.0014 | 0.0056 |
+| 2 | 98.4% | 0.012 | 0.0006 | 0.0030 |
+| **3** | **99.4%** | **0.007** | **0.0003** | **0.0013** |
+| 4 | 99.8% | 0.004 | 0.0002 | 0.0009 |
+| 5 | 99.95% | 0.002 | 0.0001 | 0.0005 |
+
+Δu'v' 可辨閾值約 0.002。
+
+- **3 個基底時 95% 的光譜色度誤差都在閾值以下**：「日光只需要 3 個基底」是色度學上的結論
+- 光譜保真（RMSE < 0.2%）需要約 5 個
+- 與 Hernández-Andrés 等人 2001 年用 2600 條實測 Granada 日光的結論一致：色度 3 個、光譜 5–7 個
+
+### 7.4 與 CIE 基底的比較
+
+- 第一變異方向與 CIE S1 夾角 9°（幾乎重合，即 CCT 軸）
+- 第二方向與 S2 夾角 26°（部分重合）
+- PC1 主要由直射可見比例驅動（陽光 vs 陰影），PC2、PC3 由太陽天頂角驅動，PC4 由水氣驅動
+
+### 7.5 限制
+
+- 8 個輸入參數只產生 3 個主要成分：低維性來自物理（大氣效應在光譜上平滑且高度共線），不是取樣巧合
+- 簡化模型的高階基底形狀不會與實測完全相同；太陽光譜用 Planck 近似，沒有 Fraunhofer 結構
+- 嚴格驗證：把實測資料庫（Granada、Judd 1964 的 622 條）餵給腳本的 `analyze(spectra, wl)`，流程相同
+
+---
+
+## 8. 流程總結
 
 ```
 高光譜資料 (n × B)
@@ -412,14 +570,27 @@ PCA on 白化資料 ──→ 特徵值 λ = 1 + SNR
     │
     ▼
 Inverse MNF 去雜訊 ──→ 解混 / 分類 / 端元估計
+
+
+感測器設計 (選通道)
+    │
+    ├─ 目標光譜庫 ──→ PCA 基底 P (k 維)
+    ├─ 候選通道 A ──→ M_w = Σ_n^{-1/2} A P
+    │
+    ▼
+A-opt / D-opt / 任務導向指標 ──→ greedy 選通道 ──→ 公差蒙地卡羅
 ```
 
 ---
 
-## 7. 參考文獻
+## 9. 參考文獻
 
 - Green, A. A., Berman, M., Switzer, P., & Craig, M. D. (1988). A transformation for ordering multispectral data in terms of image quality with implications for noise removal. *IEEE TGRS*, 26(1), 65–74.
 - Lee, J. B., Woodyatt, A. S., & Berman, M. (1990). Enhancement of high spectral resolution remote-sensing data by a noise-adjusted principal components transform. *IEEE TGRS*, 28(3), 295–304.
 - Roger, R. E., & Arnold, J. F. (1996). Reliably estimating the noise in AVIRIS hyperspectral images. *IJRS*, 17(10), 1951–1962.
 - Bioucas-Dias, J. M., & Nascimento, J. M. P. (2008). Hyperspectral subspace identification. *IEEE TGRS*, 46(8), 2435–2445.
 - Gao, L., Zhang, B., Zhang, X., Zhang, W., & Tong, Q. (2008). A new operational method for estimating noise in hyperspectral images. *IEEE GRSL*, 5(1), 83–87.
+- Judd, D. B., MacAdam, D. L., & Wyszecki, G. (1964). Spectral distribution of typical daylight as a function of correlated color temperature. *JOSA*, 54(8), 1031–1040.
+- Hernández-Andrés, J., Romero, J., Nieves, J. L., & Lee, R. L. (2001). Color and spectral analysis of daylight in southern Europe. *JOSA A*, 18(6), 1325–1335.
+- Nelson, M. P., Aust, J. F., Dobrowolski, J. A., Verly, P. G., & Myrick, M. L. (1998). Multivariate optical computation for predictive spectroscopy. *Analytical Chemistry*, 70(1), 73–82.
+- Bird, R. E., & Riordan, C. (1986). Simple solar spectral model for direct and diffuse irradiance on horizontal and tilted planes at the Earth's surface for cloudless atmospheres. *J. Climate Appl. Meteor.*, 25(1), 87–97. (SPCTRAL2)

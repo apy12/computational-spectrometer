@@ -550,7 +550,123 @@ $$
 
 ---
 
-## 8. 流程總結
+## 8. HySime 用在像素 responses：多通道感測器與重建式光譜儀
+
+### 8.1 HySime 的輸入本來就是像素
+
+HySime 把影像攤成「n 個像素 × B 個波段」矩陣，場景像素當樣本正是它的用法。它分兩段：
+
+1. 用迴歸殘差估 $\Sigma_n$（第 4 節）
+2. 在訊號共變異矩陣的特徵向量上逐一判斷「該方向訊號功率是否大於雜訊功率」，數出 k
+
+第 2 段只需要 $\Sigma_y$ 和 $\Sigma_n$ ，**不在乎 $\Sigma_n$ 從哪來**。第 1 段不適用時，第 2 段仍可搭配外部提供的 $\Sigma_n$ 使用。
+
+需要的三個條件：n ≫ B（5–10 倍）；通道冗餘 k ≪ B；雜訊在通道間不相關。
+
+### 8.2 對照兩種像素
+
+| 情況 | 迴歸估雜訊 | 補救 |
+|---|---|---|
+| 高光譜像素（B 約 100–300），n = 300 | n 與 B 同量級，過擬合、殘差趨近零 | 局部 ±10 波段迴歸、ridge、像素連續時用 shift difference；第 2 段不受影響 |
+| 設計過的多通道感測器（m 約 4–32） | 通道不冗餘，殘差混入訊號， $\Sigma_n$ 高估、k 低估 | $\Sigma_n$ 從別處來（8.3），只用第 2 段 |
+
+### 8.3 多通道情況下 Σ_n 的來源（依可靠度）
+
+1. **靜態場景多拍幾張**：影格間變異就是雜訊，在使用的資料層級上估
+2. **暗電流加平場的雜訊模型**： $\sigma^2 = \sigma_{\mathrm{read}}^2 + y / g$ ，g 為每 DN 的電子數；通道獨立，對角但隨訊號變
+3. **樣本共變異的尾端特徵值**：各通道先除以雜訊標準差，尾端 m − k 個特徵值應平坦且接近 1；用 Marchenko–Pastur 分布檢查
+4. **均質區域的像素間差分**
+
+### 8.4 去噪：冗餘從像素維度或時間維度來
+
+通道少時光譜方向沒有冗餘，但 300 個像素通常只含少數材質，訊號集中在 k 維子空間，像素間的冗餘就是去噪來源。
+
+```python
+def hysime_subspace(Sigma_y, Sigma_n):
+    # Sigma_y: 觀測共變異 (m x m)；Sigma_n: 雜訊共變異，任何來源
+    Rx = Sigma_y - Sigma_n
+    Rx = (Rx + Rx.T) / 2
+    _, E = np.linalg.eigh(Rx)
+    E = E[:, ::-1]
+    p = np.einsum('ji,jk,ki->i', E, Sigma_y, E)    # 各方向觀測功率
+    s = np.einsum('ji,jk,ki->i', E, Sigma_n, E)    # 各方向雜訊功率
+    keep = (-p + 2 * s) < 0                          # 訊號功率 > 雜訊功率
+    return int(keep.sum()), E[:, keep]
+
+def wiener_denoise(Y, Sigma_y, Sigma_n):
+    # Y: n x m 像素讀值；子空間投影的軟版本
+    mu = Y.mean(0)
+    Sigma_s = Sigma_y - Sigma_n
+    w, V = np.linalg.eigh(Sigma_s)
+    Sigma_s = (V * np.clip(w, 0, None)) @ V.T       # 裁成半正定
+    G = Sigma_s @ np.linalg.inv(Sigma_s + Sigma_n)
+    return mu + (Y - mu) @ G.T
+```
+
+HySime 判斷式 $p_i > 2 \sigma_i^2$ 等價於「該方向 SNR 大於 1」，與 MNF 的 $\lambda > 2$ 是同一件事；差別在 HySime 用訊號共變異的特徵向量，MNF 用廣義特徵向量。
+
+**目的是重建光譜時不要先去噪再重建**：貝氏重建本身含去噪，
+
+$$
+\hat{s} = \Sigma_s A^T \left( A \Sigma_s A^T + \Sigma_n \right)^{-1} y
+$$
+
+先去噪再重建等於收縮兩次，會壓掉弱訊號。雜訊只處理一次，放在重建裡。
+
+### 8.5 重建式光譜儀：300 個像素各有任意形狀的響應
+
+設定：diffuser 均勻化光場，300 個像素看到同一條光譜 $s$ ，每個像素有自己的響應曲線 $a_i(\lambda)$ ，可能多峰、寬帶、峰位不按順序：
+
+$$
+y_i = \int a_i(\lambda) s(\lambda) d\lambda + n_i , \qquad y = A s + n , \quad A \in \mathbb{R}^{300 \times B}
+$$
+
+**「順序亂掉」對子空間方法完全沒影響**
+
+PCA、SVD、MNF、HySime 全迴歸都是通道置換不變的：重排 $y$ 的元素，共變異矩陣只是行列跟著重排，特徵值、子空間、殘差不變。
+
+會壞掉的是假設相鄰通道相似的方法：光譜方向 shift difference、局部視窗迴歸、Savitzky-Golay、「逐張看成分影像判斷 k」。這些全部不能用，k 只能用特徵值或 HySime 判斷式決定。
+
+**「多峰、寬帶」對迴歸估計反而是好事**
+
+冗餘來自 $s$ 的低維性，不是響應曲線形狀。 $s \approx P c$ 只有 k 個自由度，所以 $y = A P c$ 不管 $A$ 長什麼樣都落在 k 維子空間，冗餘度 300 / k，任一像素的訊號都能被其他像素完美線性預測。300 個像素是不同物理像素，雜訊獨立，比光柵光譜儀相鄰波段有 crosstalk 更符合假設。前提仍是 n ≫ 300：要有幾千條不同入射光譜堆成 Y。
+
+**單次量測的雜訊估計：用校正過的 A**
+
+一次量測給 300 個數字，訊號只有 k 個自由度，剩下 300 − k 個自由度全是雜訊加模型誤差。只要 $A$ 有校正（單色儀掃描每個像素響應），單次量測就能自己估雜訊：
+
+```python
+def reconstruct_and_check(y, A, P, Sigma_c, sigma2):
+    # y: (m,) 一次量測；A: m x B 校正響應；P: B x k 目標光譜基底
+    # Sigma_c: k x k 基底係數先驗；sigma2: (m,) 各像素雜訊變異量（暗電流 + 光子雜訊模型）
+    M = A @ P
+    Wn = 1.0 / sigma2                                   # 對角雜訊白化
+    info = np.linalg.inv(Sigma_c) + (M.T * Wn) @ M
+    c_hat = np.linalg.solve(info, (M.T * Wn) @ y)       # MAP 係數
+    s_hat = P @ c_hat
+    r = y - M @ c_hat
+    chi2 = np.sum(r**2 * Wn) / (len(y) - M.shape[1])    # 應接近 1
+    return s_hat, chi2, np.linalg.inv(info)             # 後驗共變異可轉成光譜誤差條
+```
+
+`chi2` 是即時自我檢查：接近 1 表示雜訊模型與校正都對；明顯大於 1 表示 $A$ 漂移（濾光片峰位隨溫度移動）或 $s$ 跑出光譜庫子空間；小於 1 表示雜訊模型高估。每一發都能做，比 HySime 更直接。
+
+**去噪就是重建**
+
+MAP 解已是最佳線性去噪，300 個像素對 k 個未知數，平均增益約 $\sqrt{300 / k}$ 。先驗依應用換：環境光用光譜庫 PCA 基底加高斯先驗；Raman 改成峰位字典加稀疏先驗（NNLS / LASSO），因為 Raman 光譜是稀疏而非低秩，高斯先驗會抹平窄峰。
+
+**多峰寬帶響應真正要擔心的兩件事**
+
+- *雜訊異質性*：寬帶像素光子多、SNR 高；窄峰像素光子少、SNR 低，可差一個數量級。 $\Sigma_n$ 不能當成 $\sigma^2 I$ ，要逐像素建模並白化；設計指標看 $\Sigma_n^{-1/2} A P$ 的奇異值
+- *校正誤差比光子雜訊更危險*：尖銳多峰響應對峰位漂移極敏感， $\Delta A \cdot s$ 在像素間是相關的（同一溫度漂移影響所有像素），不符合雜訊獨立假設，也不會被 300 對 k 的平均消掉。對策：chi2 監控、溫度補償校正表、或把 $A$ 的不確定性當成額外共變異項加進 $\Sigma_n$ 。寬帶平滑響應對漂移較穩健，這是多峰與寬帶的取捨
+
+**什麼時候還是用 HySime**
+
+累積幾千次量測後，把 Y（n × 300）丟給 HySime 當交叉驗證：估出的 $\Sigma_n$ 應與暗電流模型一致，估出的 k 應與光譜庫 PCA 維度一致。對不上通常是校正漂移或光譜庫不夠多樣。
+
+---
+
+## 9. 流程總結
 
 ```
 高光譜資料 (n × B)
@@ -579,11 +695,22 @@ Inverse MNF 去雜訊 ──→ 解混 / 分類 / 端元估計
     │
     ▼
 A-opt / D-opt / 任務導向指標 ──→ greedy 選通道 ──→ 公差蒙地卡羅
+
+
+重建式光譜儀 (300 像素, 任意響應, 單次量測 y)
+    │
+    ├─ 校正 A ──→ M = A P
+    ├─ 逐像素雜訊模型 σ_i² ──→ 白化
+    │
+    ▼
+MAP 重建 ŝ = P ĉ ──→ chi2 = rᵀΣ_n⁻¹r / (m − k) ≈ 1 ?
+    │
+    ├─ 累積 n ≫ 300 次量測後 ──→ HySime 交叉驗證 Σ_n 與 k
 ```
 
 ---
 
-## 9. 參考文獻
+## 10. 參考文獻
 
 - Green, A. A., Berman, M., Switzer, P., & Craig, M. D. (1988). A transformation for ordering multispectral data in terms of image quality with implications for noise removal. *IEEE TGRS*, 26(1), 65–74.
 - Lee, J. B., Woodyatt, A. S., & Berman, M. (1990). Enhancement of high spectral resolution remote-sensing data by a noise-adjusted principal components transform. *IEEE TGRS*, 28(3), 295–304.
